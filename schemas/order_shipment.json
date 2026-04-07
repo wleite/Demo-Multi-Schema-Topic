@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OrderShipment",
+  "type": "object",
+  "properties": {
+    "order_id": { "type": "string" },
+    "tracking_number": { "type": "string" },
+    "carrier": {
+      "type": "string",
+      "enum": ["FEDEX", "UPS", "DHL", "USPS", "CORREIOS"]
+    },
+    "shipment_status": {
+      "type": "string",
+      "enum": ["LABEL_CREATED", "PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED"]
+    },
+    "estimated_delivery": { "type": "string", "format": "date-time" },
+    "shipped_at": { "type": "string", "format": "date-time" }
+  },
+  "required": ["order_id", "tracking_number", "carrier", "shipment_status", "shipped_at"]
+}

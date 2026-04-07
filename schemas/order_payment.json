@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OrderPayment",
+  "type": "object",
+  "properties": {
+    "order_id": { "type": "string" },
+    "payment_method": {
+      "type": "string",
+      "enum": ["CREDIT_CARD", "DEBIT_CARD", "PIX", "PAYPAL", "BANK_TRANSFER"]
+    },
+    "amount": { "type": "number" },
+    "currency": { "type": "string" },
+    "payment_status": {
+      "type": "string",
+      "enum": ["INITIATED", "AUTHORIZED", "CAPTURED", "REFUNDED", "FAILED"]
+    },
+    "processed_at": { "type": "string", "format": "date-time" }
+  },
+  "required": ["order_id", "payment_method", "amount", "currency", "payment_status", "processed_at"]
+}

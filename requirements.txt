@@ -1,0 +1,4 @@
+confluent-kafka[json,avro,schema-registry]
+python-dotenv
+rich
+pyfiglet

@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OrderStatus",
+  "type": "object",
+  "properties": {
+    "order_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["PENDING", "CONFIRMED", "PROCESSING", "COMPLETED", "CANCELLED"]
+    },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "customer_id": { "type": "string" }
+  },
+  "required": ["order_id", "status", "updated_at", "customer_id"]
+}
