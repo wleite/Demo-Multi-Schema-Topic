@@ -2,6 +2,8 @@
 
 A step-by-step guide for producing and consuming **multiple event types** on a **single Kafka topic** in Confluent Cloud, using **JSON Schema** with the **TopicRecordNameStrategy**.
 
+> 🇧🇷 **Português (Brasil):** Este guia também está disponível em português! Acesse o [README-BR.md](README-BR.md) para instruções em PT-BR.
+
 ---
 
 ## 📖 Table of Contents
@@ -80,7 +82,7 @@ For a detailed architecture reference, see [`assets/architecture.md`](assets/arc
 
 - **Confluent Cloud Account** — [Sign up for free](https://www.confluent.io/confluent-cloud/tryfree/)
 - **Python 3.8+**
-- **pip** (Python package manager)
+- **uv** — Fast Python package manager ([docs](https://docs.astral.sh/uv/))
 
 ### Optional
 
@@ -104,7 +106,7 @@ python3 --version
 <summary>🐧 Linux (Ubuntu/Debian)</summary>
 
 ```bash
-sudo apt update && sudo apt install python3 python3-pip python3-venv
+sudo apt update && sudo apt install python3 python3-venv
 
 # Verify
 python3 --version
@@ -123,6 +125,46 @@ winget install Python.Python.3.12
 python --version
 ```
 </details>
+
+### Installing uv
+
+<details>
+<summary>🍎 macOS</summary>
+
+```bash
+# Using Homebrew
+brew install uv
+
+# Or using the standalone installer
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+</details>
+
+<details>
+<summary>🐧 Linux</summary>
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+</details>
+
+<details>
+<summary>🪟 Windows</summary>
+
+```powershell
+# Using the standalone installer
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Or using winget
+winget install --id=astral-sh.uv -e
+```
+</details>
+
+Verify the installation:
+
+```bash
+uv --version
+```
 
 ### Installing Confluent CLI
 
@@ -270,14 +312,21 @@ These credentials allow your application to register and fetch schemas.
 <summary>💻 CLI Path</summary>
 
 ```bash
-# Enable Schema Registry (if not already enabled)
-confluent schema-registry cluster enable --cloud aws --geo us
+# Get Schema Registry cluster ID and endpoint URL
+confluent schema-registry cluster describe
 
-# Create Schema Registry API key
-confluent api-key create --resource <sr-cluster-id>
+# The output will show (relevant fields):
+# +----------------+----------------------------------------------------+
+# | Cluster        | lsrc-xxxxx                                         |
+# | Endpoint URL   | https://psrc-xxxxx.us-east-1.aws.confluent.cloud   |
+# +----------------+----------------------------------------------------+
 
-# Get Schema Registry URL
-confluent schema-registry cluster describe -o json | jq -r '.endpoint_url'
+# Create Schema Registry API key using the Cluster ID from above
+confluent api-key create --resource lsrc-xxxxx
+
+# The output will show:
+# API Key:    <SCHEMA_REGISTRY_API_KEY>
+# API Secret: <SCHEMA_REGISTRY_API_SECRET>
 ```
 </details>
 
@@ -467,8 +516,8 @@ cd Demo-Multi-Schema-Topic
 <summary>🍎 macOS / 🐧 Linux</summary>
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+uv venv demo-multi-schema
+source demo-multi-schema/bin/activate
 ```
 </details>
 
@@ -476,15 +525,15 @@ source venv/bin/activate
 <summary>🪟 Windows</summary>
 
 ```powershell
-python -m venv venv
-.\venv\Scripts\activate
+uv venv demo-multi-schema
+.\demo-multi-schema\Scripts\activate
 ```
 </details>
 
 ### 3. Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 ### 4. Configure Credentials
@@ -583,7 +632,7 @@ Open a **second terminal tab/window**, activate the virtual environment, and run
 <summary>🍎 macOS / 🐧 Linux</summary>
 
 ```bash
-source venv/bin/activate
+source demo-multi-schema/bin/activate
 cd src
 python consumer.py
 ```
@@ -593,7 +642,7 @@ python consumer.py
 <summary>🪟 Windows</summary>
 
 ```powershell
-.\venv\Scripts\activate
+.\demo-multi-schema\Scripts\activate
 cd src
 python consumer.py
 ```
@@ -661,6 +710,14 @@ python consumer.py
 
 ✅ Consumer closed gracefully. Total messages consumed: 15
 ```
+
+---
+
+## 💡 Pro Tip — Split Terminal
+
+For the best experience, split your terminal **vertically** to run the producer and consumer side by side. This way you can watch events being produced on the left and consumed on the right in real time!
+
+![Producer and Consumer running side by side in a vertically split terminal](assets/terminal-split-demo.png)
 
 ---
 
