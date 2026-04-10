@@ -1,5 +1,13 @@
 # 📦 Multi-Schema Topic Demo — Confluent Cloud
 
+![Python](https://img.shields.io/badge/Python-3.8+-3776AB?style=flat&logo=python&logoColor=white)
+![Apache Kafka](https://img.shields.io/badge/Apache%20Kafka-231F20?style=flat&logo=apachekafka&logoColor=white)
+![Confluent Cloud](https://img.shields.io/badge/Confluent%20Cloud-0073C3?style=flat&logo=confluent&logoColor=white)
+![JSON Schema](https://img.shields.io/badge/JSON%20Schema-Draft--07-F7DF1E?style=flat&logo=json&logoColor=black)
+![GitHub tag](https://img.shields.io/github/v/tag/wleite/Demo-Multi-Schema-Topic?label=version&color=brightgreen)
+![License](https://img.shields.io/badge/License-MIT-blue.svg)
+[![🇧🇷 Português](https://img.shields.io/badge/🇧🇷_Português-README--BR-green)](README-BR.md)
+
 Guia passo a passo para produzir e consumir **múltiplos tipos de eventos** em um **único tópico Kafka** no Confluent Cloud, utilizando **JSON Schema** com a estratégia **TopicRecordNameStrategy**.
 
 > 🇺🇸 **English:** This guide is also available in English! See the [README.md](README.md).
