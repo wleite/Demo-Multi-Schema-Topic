@@ -24,7 +24,13 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from config import get_kafka_config, get_schema_registry_config, get_topic_name
+from config import (
+    get_kafka_config,
+    get_schema_registry_config,
+    get_topic_name,
+    get_num_messages,
+    get_producer_flush_timeout,
+)
 from schemas import (
     ORDER_STATUS_SCHEMA_PATH,
     ORDER_PAYMENT_SCHEMA_PATH,
@@ -32,6 +38,9 @@ from schemas import (
     get_schema_str,
     get_display_info,
 )
+from logger import setup_logging
+
+logger = setup_logging(__name__)
 
 console = Console()
 
@@ -165,36 +174,50 @@ def main():
     show_banner()
 
     topic = get_topic_name()
-    num_messages = 15  # 5 of each type
+    num_messages = get_num_messages()
+    flush_timeout = get_producer_flush_timeout()
+
+    logger.info(f"Starting producer - topic={topic}, messages={num_messages}")
 
     console.print(f"[bold]📋 Topic:[/bold]    [cyan]{topic}[/cyan]")
-    console.print(f"[bold]📦 Messages:[/bold] [cyan]{num_messages}[/cyan] (5 per schema type)")
+    console.print(f"[bold]📦 Messages:[/bold] [cyan]{num_messages}[/cyan] ({num_messages // 3} per schema type)")
     console.print(f"[bold]📐 Strategy:[/bold] [cyan]TopicRecordNameStrategy[/cyan]")
     console.print()
 
     # ── Initialize clients ─────────────────────────────────────────────────
     console.print("[dim]Connecting to Confluent Cloud...[/dim]")
 
-    kafka_config = get_kafka_config()
-    sr_config = get_schema_registry_config()
-    schema_registry_client = SchemaRegistryClient(sr_config)
-
-    producer = Producer(kafka_config)
+    try:
+        kafka_config = get_kafka_config(producer=True)
+        sr_config = get_schema_registry_config()
+        schema_registry_client = SchemaRegistryClient(sr_config)
+        producer = Producer(kafka_config)
+        logger.info("Successfully connected to Kafka and Schema Registry")
+    except Exception as e:
+        logger.error(f"Failed to initialize Kafka clients: {e}")
+        console.print(f"\n[bold red]✗ Connection failed: {e}[/bold red]\n")
+        return 1
 
     # ── Create serializers ─────────────────────────────────────────────────
     console.print("[dim]Initializing JSON serializers...[/dim]\n")
 
-    serializers = {
-        "OrderStatus": create_json_serializer(
-            schema_registry_client, ORDER_STATUS_SCHEMA_PATH, "OrderStatus"
-        ),
-        "OrderPayment": create_json_serializer(
-            schema_registry_client, ORDER_PAYMENT_SCHEMA_PATH, "OrderPayment"
-        ),
-        "OrderShipment": create_json_serializer(
-            schema_registry_client, ORDER_SHIPMENT_SCHEMA_PATH, "OrderShipment"
-        ),
-    }
+    try:
+        serializers = {
+            "OrderStatus": create_json_serializer(
+                schema_registry_client, ORDER_STATUS_SCHEMA_PATH, "OrderStatus"
+            ),
+            "OrderPayment": create_json_serializer(
+                schema_registry_client, ORDER_PAYMENT_SCHEMA_PATH, "OrderPayment"
+            ),
+            "OrderShipment": create_json_serializer(
+                schema_registry_client, ORDER_SHIPMENT_SCHEMA_PATH, "OrderShipment"
+            ),
+        }
+        logger.info("Successfully initialized serializers for all event types")
+    except Exception as e:
+        logger.error(f"Failed to create serializers: {e}")
+        console.print(f"\n[bold red]✗ Serializer creation failed: {e}[/bold red]\n")
+        return 1
 
     generators = {
         "OrderStatus": generate_order_status,
@@ -227,22 +250,44 @@ def main():
             f"[dim]order_id={data['order_id']}[/dim]"
         )
 
-        # Serialize and produce
-        serialization_ctx = SerializationContext(topic, MessageField.VALUE)
-        serialized_value = serializers[event_type](data, serialization_ctx)
+        try:
+            # Serialize and produce
+            serialization_ctx = SerializationContext(topic, MessageField.VALUE)
+            serialized_value = serializers[event_type](data, serialization_ctx)
 
-        producer.produce(
-            topic=topic,
-            key=data["order_id"],
-            value=serialized_value,
-            on_delivery=lambda err, msg, et=event_type: delivery_report(err, msg, et),
-        )
+            producer.produce(
+                topic=topic,
+                key=data["order_id"],
+                value=serialized_value,
+                on_delivery=lambda err, msg, et=event_type: delivery_report(err, msg, et),
+            )
 
-        producer.poll(0)
+            producer.poll(0)
+            logger.debug(f"Queued {event_type} message: {data['order_id']}")
+
+        except BufferError as e:
+            # Local queue is full, wait for messages to be sent
+            logger.warning(f"Producer queue full, waiting... {e}")
+            console.print(f"  [yellow]⚠ Queue full, flushing...[/yellow]")
+            producer.flush(timeout=10)
+            # Retry this message
+            i -= 1
+            continue
+
+        except Exception as e:
+            logger.error(f"Failed to produce {event_type} message: {e}")
+            console.print(
+                f"  [bold red]✗ Failed to produce {display['label']}: {e}[/bold red]"
+            )
 
     # ── Flush and summary ──────────────────────────────────────────────────
     console.print("\n[dim]Flushing producer...[/dim]")
-    producer.flush(timeout=30)
+    remaining = producer.flush(timeout=flush_timeout)
+    if remaining > 0:
+        logger.warning(f"{remaining} messages failed to deliver after flush")
+        console.print(f"[yellow]⚠ {remaining} messages not delivered[/yellow]\n")
+    else:
+        logger.info("All messages flushed successfully")
     console.print()
 
     # Summary table
@@ -265,11 +310,25 @@ def main():
         )
 
     console.print(summary_table)
+    total_produced = sum(produced_count.values())
+    logger.info(f"Producer finished - {total_produced}/{num_messages} messages delivered")
     console.print(
-        f"\n[bold green]✅ Successfully produced {sum(produced_count.values())} messages "
+        f"\n[bold green]✅ Successfully produced {total_produced} messages "
         f"to topic [cyan]{topic}[/cyan][/bold green]\n"
     )
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        exit_code = main()
+        sys.exit(exit_code if exit_code is not None else 0)
+    except KeyboardInterrupt:
+        logger.info("Producer interrupted by user")
+        console.print("\n[yellow]⚠ Interrupted by user[/yellow]\n")
+        sys.exit(130)
+    except Exception as e:
+        logger.exception(f"Unexpected error in producer: {e}")
+        console.print(f"\n[bold red]✗ Unexpected error: {e}[/bold red]\n")
+        sys.exit(1)
