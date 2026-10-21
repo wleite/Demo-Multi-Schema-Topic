@@ -23,8 +23,18 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from config import get_kafka_config, get_schema_registry_config, get_topic_name
+from config import (
+    get_kafka_config,
+    get_schema_registry_config,
+    get_topic_name,
+    get_consumer_group_id,
+    get_auto_offset_reset,
+    get_consumer_poll_timeout,
+)
 from schemas import identify_event_type, get_display_info
+from logger import setup_logging
+
+logger = setup_logging(__name__)
 
 console = Console()
 
@@ -98,10 +108,14 @@ def main():
     show_banner()
 
     topic = get_topic_name()
+    group_id = get_consumer_group_id()
+    poll_timeout = get_consumer_poll_timeout()
+
+    logger.info(f"Starting consumer - topic={topic}, group_id={group_id}")
 
     console.print(f"[bold]📋 Topic:[/bold]       [cyan]{topic}[/cyan]")
     console.print(f"[bold]📐 Strategy:[/bold]    [cyan]TopicRecordNameStrategy[/cyan]")
-    console.print(f"[bold]🔄 Group ID:[/bold]    [cyan]multi-schema-demo-consumer[/cyan]")
+    console.print(f"[bold]🔄 Group ID:[/bold]    [cyan]{group_id}[/cyan]")
     console.print()
     console.print(
         "[bold yellow]💡 Press CTRL+C to stop the consumer[/bold yellow]\n"
@@ -110,27 +124,34 @@ def main():
     # ── Initialize clients ─────────────────────────────────────────────────
     console.print("[dim]Connecting to Confluent Cloud...[/dim]")
 
-    kafka_config = get_kafka_config()
-    kafka_config.update(
-        {
-            "group.id": "multi-schema-demo-consumer",
-            "auto.offset.reset": "earliest",
-            "enable.auto.commit": "true",
-        }
-    )
+    try:
+        kafka_config = get_kafka_config(producer=False)
+        kafka_config.update(
+            {
+                "group.id": group_id,
+                "auto.offset.reset": get_auto_offset_reset(),
+                "enable.auto.commit": "true",
+            }
+        )
 
-    sr_config = get_schema_registry_config()
-    schema_registry_client = SchemaRegistryClient(sr_config)
+        sr_config = get_schema_registry_config()
+        schema_registry_client = SchemaRegistryClient(sr_config)
 
-    # Create a generic JSONDeserializer — it will use the schema ID in each
-    # message to fetch the correct schema from Schema Registry automatically.
-    json_deserializer = JSONDeserializer(
-        schema_str=None,
-        schema_registry_client=schema_registry_client,
-    )
+        # Create a generic JSONDeserializer — it will use the schema ID in each
+        # message to fetch the correct schema from Schema Registry automatically.
+        json_deserializer = JSONDeserializer(
+            schema_str=None,
+            schema_registry_client=schema_registry_client,
+        )
 
-    consumer = Consumer(kafka_config)
-    consumer.subscribe([topic])
+        consumer = Consumer(kafka_config)
+        consumer.subscribe([topic])
+        logger.info(f"Successfully connected and subscribed to {topic}")
+
+    except Exception as e:
+        logger.error(f"Failed to initialize consumer: {e}")
+        console.print(f"\n[bold red]✗ Connection failed: {e}[/bold red]\n")
+        return 1
 
     console.print(f"[dim]Subscribed to topic: {topic}[/dim]")
     console.print(
@@ -145,18 +166,20 @@ def main():
     # ── Consume loop ───────────────────────────────────────────────────────
     try:
         while running:
-            msg = consumer.poll(timeout=1.0)
+            msg = consumer.poll(timeout=poll_timeout)
 
             if msg is None:
                 continue
 
             if msg.error():
                 if msg.error().code() == KafkaError._PARTITION_EOF:
+                    logger.debug(f"Reached end of partition {msg.partition()}")
                     console.print(
                         f"[dim]  ⏸ Reached end of partition {msg.partition()} "
                         f"at offset {msg.offset()}[/dim]"
                     )
-                elif msg.error():
+                else:
+                    logger.error(f"Consumer error: {msg.error()}")
                     raise KafkaException(msg.error())
                 continue
 
@@ -168,20 +191,39 @@ def main():
                 data = json_deserializer(msg.value(), serialization_ctx)
 
                 if data is not None:
+                    logger.debug(f"Consumed message from partition {msg.partition()}, offset {msg.offset()}")
                     display_message(data, msg.partition(), msg.offset())
+
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON decode error at offset {msg.offset()}: {e}")
+                console.print(
+                    f"[bold red]✗ Invalid JSON at offset {msg.offset()}: {e}[/bold red]"
+                )
+
             except Exception as e:
-                # Fallback: try plain JSON if the message wasn't serialized with SR
+                # Try fallback: plain JSON if message wasn't serialized with SR
+                logger.warning(f"Schema Registry deserialization failed, trying plain JSON: {e}")
                 try:
                     data = json.loads(msg.value().decode("utf-8"))
                     display_message(data, msg.partition(), msg.offset())
-                except Exception:
+                except Exception as fallback_error:
+                    logger.error(f"Failed to deserialize message at offset {msg.offset()}: {fallback_error}")
                     console.print(
                         f"[bold red]✗ Failed to deserialize message at "
                         f"offset {msg.offset()}: {e}[/bold red]"
                     )
 
     except KeyboardInterrupt:
+        logger.info("Consumer interrupted by user")
         pass
+    except KafkaException as e:
+        logger.error(f"Kafka error in consumer loop: {e}")
+        console.print(f"\n[bold red]✗ Kafka error: {e}[/bold red]\n")
+        return 1
+    except Exception as e:
+        logger.exception(f"Unexpected error in consumer: {e}")
+        console.print(f"\n[bold red]✗ Unexpected error: {e}[/bold red]\n")
+        return 1
     finally:
         # ── Shutdown ───────────────────────────────────────────────────────
         consumer.close()
@@ -209,11 +251,24 @@ def main():
 
             console.print(summary_table)
 
+        logger.info(f"Consumer finished - {total} messages consumed")
         console.print(
             f"\n[bold green]✅ Consumer closed gracefully. "
             f"Total messages consumed: {total}[/bold green]\n"
         )
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        exit_code = main()
+        sys.exit(exit_code if exit_code is not None else 0)
+    except KeyboardInterrupt:
+        logger.info("Consumer interrupted by user")
+        console.print("\n[yellow]⚠ Interrupted by user[/yellow]\n")
+        sys.exit(130)
+    except Exception as e:
+        logger.exception(f"Unexpected error: {e}")
+        console.print(f"\n[bold red]✗ Unexpected error: {e}[/bold red]\n")
+        sys.exit(1)
